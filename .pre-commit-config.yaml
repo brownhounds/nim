@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: golangci
+        name: golangci
+        entry: make lint
+        language: system
+        types: [text]
+
+      # - id: changeloglint
+      #   name: changeloglint
+      #   entry: make changelog-lint
+      #   language: system
+      #   types: [text]

@@ -1,0 +1,45 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - unused
+    - errcheck
+    - govet
+    - gocritic
+    - ineffassign
+    - staticcheck
+    - gocyclo
+    - goconst
+    - unparam
+    - unconvert
+    - bodyclose
+    - err113
+    - sqlclosecheck
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    govet:
+      enable:
+        - fieldalignment
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt
+
+run:
+  issues-exit-code: 1
