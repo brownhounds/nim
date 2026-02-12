@@ -8,9 +8,6 @@ lint:
 changelog-lint:
 	@changelog-lint
 
-version-lint:
-	@./scripts/lint-version.sh
-
 fix:
 	@golangci-lint run --fix
 
@@ -30,8 +27,6 @@ bench:
 	@go test -run=^$$ -bench=. -benchmem ./tests
 
 git-tag:
-	@./scripts/release.sh $(v)
-	@./scripts/lint-version.sh
 	@git tag --sign v$(v) -m v$(v)
 	@git push origin v$(v)
 
