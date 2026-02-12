@@ -31,7 +31,7 @@ func launchSetWorkers(
 	panicCh chan<- struct{},
 	wg *sync.WaitGroup,
 ) {
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		worker := worker
 		wg.Go(func() {
 			defer func() {
@@ -58,14 +58,14 @@ func launchRemoveWorkers(
 	panicCh chan<- struct{},
 	wg *sync.WaitGroup,
 ) {
-	for worker := 0; worker < workers; worker++ {
+	for range workers {
 		wg.Go(func() {
 			defer func() {
 				if recover() != nil {
 					panicCh <- struct{}{}
 				}
 			}()
-			for op := 0; op < opsPerWorker; op++ {
+			for range opsPerWorker {
 				if err := client.Remove(key); err != nil {
 					errCh <- err
 				}
@@ -228,6 +228,164 @@ func TestLockContentionTable(t *testing.T) {
 				t.Fatalf("operation did not complete after lock release")
 			}
 		})
+	}
+}
+
+func TestLockIsScopedToFullKeyPath(t *testing.T) {
+	t.Parallel()
+
+	const caseName = "lock scope by full key path"
+
+	client := newClientForCase(t, caseName, 1024)
+	lockedKey := "test::something::123"
+	otherKey := "test::other"
+
+	rootPath := caseRootPath(t, caseName)
+	lockedDirPath := cacheKeyDir(rootPath, lockedKey)
+	if err := os.MkdirAll(lockedDirPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s) error=%v", lockedDirPath, err)
+	}
+
+	lockPath := lockedDirPath + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(lock) error=%v", err)
+	}
+	defer func() {
+		_ = lockFile.Close()
+	}()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("Flock(lock) error=%v", err)
+	}
+
+	lockedDone := make(chan error, 1)
+	go func() {
+		lockedDone <- client.Set(lockedKey, "locked-value", 0)
+	}()
+
+	select {
+	case opErr := <-lockedDone:
+		t.Fatalf("locked key operation completed while lock held, err=%v", opErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	otherDone := make(chan error, 1)
+	go func() {
+		otherDone <- client.Set(otherKey, "other-value", 0)
+	}()
+
+	select {
+	case opErr := <-otherDone:
+		if opErr != nil {
+			t.Fatalf("other key operation error=%v", opErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("other key operation blocked by different key lock")
+	}
+
+	var out string
+	ok, err := client.Get(otherKey, &out)
+	if err != nil {
+		t.Fatalf("Get(other key) error=%v", err)
+	}
+	if !ok {
+		t.Fatalf("Get(other key) ok=%v want=true", ok)
+	}
+	if out != "other-value" {
+		t.Fatalf("Get(other key) value=%q want=%q", out, "other-value")
+	}
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("Flock(unlock) error=%v", err)
+	}
+
+	select {
+	case opErr := <-lockedDone:
+		if opErr != nil {
+			t.Fatalf("locked key operation error=%v", opErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("locked key operation did not complete after lock release")
+	}
+}
+
+func TestLockIsScopedToFullKeyPathReverse(t *testing.T) {
+	t.Parallel()
+
+	const caseName = "lock scope by full key path reverse"
+
+	client := newClientForCase(t, caseName, 1024)
+	lockedKey := "test::other"
+	otherKey := "test::something::123"
+
+	rootPath := caseRootPath(t, caseName)
+	lockedDirPath := cacheKeyDir(rootPath, lockedKey)
+	if err := os.MkdirAll(lockedDirPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s) error=%v", lockedDirPath, err)
+	}
+
+	lockPath := lockedDirPath + ".lock"
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(lock) error=%v", err)
+	}
+	defer func() {
+		_ = lockFile.Close()
+	}()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatalf("Flock(lock) error=%v", err)
+	}
+
+	lockedDone := make(chan error, 1)
+	go func() {
+		lockedDone <- client.Set(lockedKey, "locked-value", 0)
+	}()
+
+	select {
+	case opErr := <-lockedDone:
+		t.Fatalf("locked key operation completed while lock held, err=%v", opErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	otherDone := make(chan error, 1)
+	go func() {
+		otherDone <- client.Set(otherKey, "other-value", 0)
+	}()
+
+	select {
+	case opErr := <-otherDone:
+		if opErr != nil {
+			t.Fatalf("other key operation error=%v", opErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("other key operation blocked by different key lock")
+	}
+
+	var out string
+	ok, err := client.Get(otherKey, &out)
+	if err != nil {
+		t.Fatalf("Get(other key) error=%v", err)
+	}
+	if !ok {
+		t.Fatalf("Get(other key) ok=%v want=true", ok)
+	}
+	if out != "other-value" {
+		t.Fatalf("Get(other key) value=%q want=%q", out, "other-value")
+	}
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("Flock(unlock) error=%v", err)
+	}
+
+	select {
+	case opErr := <-lockedDone:
+		if opErr != nil {
+			t.Fatalf("locked key operation error=%v", opErr)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("locked key operation did not complete after lock release")
 	}
 }
 
