@@ -40,6 +40,50 @@ func listSymlinkNames(t *testing.T, dirPath string) []string {
 	return out
 }
 
+func assertFilesystemSetLayout(
+	t *testing.T,
+	rootPath string,
+	key string,
+	wantSymlink bool,
+	wantSymlinkName bool,
+) {
+	t.Helper()
+
+	dirPath := cacheKeyDir(rootPath, key)
+	cachePath := filepath.Join(dirPath, "cache")
+	info, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatalf("Stat(cache) error=%v", err)
+	}
+	if info.IsDir() {
+		t.Fatalf("cache path is dir, want file")
+	}
+
+	symlinks := listSymlinkNames(t, dirPath)
+	if wantSymlink && len(symlinks) != 1 {
+		t.Fatalf("symlink count=%d want=1 names=%v", len(symlinks), symlinks)
+	}
+	if !wantSymlink && len(symlinks) != 0 {
+		t.Fatalf("symlink count=%d want=0 names=%v", len(symlinks), symlinks)
+	}
+
+	if len(symlinks) == 1 {
+		target, readErr := os.Readlink(filepath.Join(dirPath, symlinks[0]))
+		if readErr != nil {
+			t.Fatalf("Readlink error=%v", readErr)
+		}
+		if target != "cache" {
+			t.Fatalf("Readlink target=%q want=%q", target, "cache")
+		}
+	}
+
+	if wantSymlinkName && len(symlinks) == 1 {
+		if _, parseErr := strconv.ParseInt(symlinks[0], 10, 64); parseErr != nil {
+			t.Fatalf("symlink name=%q parseErr=%v", symlinks[0], parseErr)
+		}
+	}
+}
+
 func TestFilesystemSetLayoutTable(t *testing.T) {
 	t.Parallel()
 
@@ -91,40 +135,7 @@ func TestFilesystemSetLayoutTable(t *testing.T) {
 					t.Fatalf("Set(second) error=%v", err)
 				}
 			}
-
-			dirPath := cacheKeyDir(rootPath, tc.key)
-			cachePath := filepath.Join(dirPath, "cache")
-			info, err := os.Stat(cachePath)
-			if err != nil {
-				t.Fatalf("Stat(cache) error=%v", err)
-			}
-			if info.IsDir() {
-				t.Fatalf("cache path is dir, want file")
-			}
-
-			symlinks := listSymlinkNames(t, dirPath)
-			if tc.wantSymlink && len(symlinks) != 1 {
-				t.Fatalf("symlink count=%d want=1 names=%v", len(symlinks), symlinks)
-			}
-			if !tc.wantSymlink && len(symlinks) != 0 {
-				t.Fatalf("symlink count=%d want=0 names=%v", len(symlinks), symlinks)
-			}
-
-			if len(symlinks) == 1 {
-				target, readErr := os.Readlink(filepath.Join(dirPath, symlinks[0]))
-				if readErr != nil {
-					t.Fatalf("Readlink error=%v", readErr)
-				}
-				if target != "cache" {
-					t.Fatalf("Readlink target=%q want=%q", target, "cache")
-				}
-			}
-
-			if tc.wantSymlinkName && len(symlinks) == 1 {
-				if _, parseErr := strconv.ParseInt(symlinks[0], 10, 64); parseErr != nil {
-					t.Fatalf("symlink name=%q parseErr=%v", symlinks[0], parseErr)
-				}
-			}
+			assertFilesystemSetLayout(t, rootPath, tc.key, tc.wantSymlink, tc.wantSymlinkName)
 		})
 	}
 }

@@ -3,6 +3,7 @@ build:
 
 lint:
 	@golangci-lint run
+	@golangci-lint run --enable-only gocyclo
 
 changelog-lint:
 	@changelog-lint

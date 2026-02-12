@@ -10,7 +10,7 @@
 
 Simple file-backed key/value cache for Go.
 
-It stores values on disk, supports optional TTL expiration, and is safe for concurrent access with per-key file locks.
+It stores values on disk, supports TTL expiration, and is safe for concurrent access with per-key file locks.
 
 Note: Values are read/written as whole byte payloads, so this is not optimized for very large payloads.
 

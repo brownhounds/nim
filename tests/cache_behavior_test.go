@@ -50,6 +50,83 @@ func newClientForCase(t *testing.T, caseName string, maxBytes int) *nim.Client {
 	return client
 }
 
+func runSetGetCase(
+	t *testing.T,
+	client *nim.Client,
+	valueKind int,
+	stringVal string,
+	bytesVal []byte,
+	structVal sampleValue,
+) {
+	t.Helper()
+
+	switch valueKind {
+	case 0:
+		if err := client.Set("cache::item", stringVal, 0); err != nil {
+			t.Fatalf("Set error=%v", err)
+		}
+		var out string
+		ok, err := client.Get("cache::item", &out)
+		if err != nil {
+			t.Fatalf("Get error=%v", err)
+		}
+		if !ok {
+			t.Fatalf("Get ok=%v want=true", ok)
+		}
+		if out != stringVal {
+			t.Fatalf("Get value=%q want=%q", out, stringVal)
+		}
+	case 1:
+		if err := client.Set("cache::item", bytesVal, 0); err != nil {
+			t.Fatalf("Set error=%v", err)
+		}
+		var out []byte
+		ok, err := client.Get("cache::item", &out)
+		if err != nil {
+			t.Fatalf("Get error=%v", err)
+		}
+		if !ok {
+			t.Fatalf("Get ok=%v want=true", ok)
+		}
+		if !bytes.Equal(out, bytesVal) {
+			t.Fatalf("Get value=%q want=%q", string(out), string(bytesVal))
+		}
+	case 2:
+		if err := client.Set("cache::item", structVal, 0); err != nil {
+			t.Fatalf("Set error=%v", err)
+		}
+		var out sampleValue
+		ok, err := client.Get("cache::item", &out)
+		if err != nil {
+			t.Fatalf("Get error=%v", err)
+		}
+		if !ok {
+			t.Fatalf("Get ok=%v want=true", ok)
+		}
+		if out != structVal {
+			t.Fatalf("Get value=%+v want=%+v", out, structVal)
+		}
+	default:
+		t.Fatalf("unknown value kind=%d", valueKind)
+	}
+}
+
+func assertGetStringValue(t *testing.T, client *nim.Client, key, want string) {
+	t.Helper()
+
+	var out string
+	ok, err := client.Get(key, &out)
+	if err != nil {
+		t.Fatalf("Get error=%v", err)
+	}
+	if !ok {
+		t.Fatalf("Get ok=%v want=true", ok)
+	}
+	if out != want {
+		t.Fatalf("Get value=%q want=%q", out, want)
+	}
+}
+
 func TestCacheSetGetTable(t *testing.T) {
 	t.Parallel()
 
@@ -90,56 +167,7 @@ func TestCacheSetGetTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newClientForCase(t, tc.name, tc.maxBytes)
-
-			switch tc.valueKind {
-			case valueKindString:
-				if err := client.Set("cache::item", tc.stringVal, 0); err != nil {
-					t.Fatalf("Set error=%v", err)
-				}
-				var out string
-				ok, err := client.Get("cache::item", &out)
-				if err != nil {
-					t.Fatalf("Get error=%v", err)
-				}
-				if !ok {
-					t.Fatalf("Get ok=%v want=true", ok)
-				}
-				if out != tc.stringVal {
-					t.Fatalf("Get value=%q want=%q", out, tc.stringVal)
-				}
-			case valueKindBytes:
-				if err := client.Set("cache::item", tc.bytesVal, 0); err != nil {
-					t.Fatalf("Set error=%v", err)
-				}
-				var out []byte
-				ok, err := client.Get("cache::item", &out)
-				if err != nil {
-					t.Fatalf("Get error=%v", err)
-				}
-				if !ok {
-					t.Fatalf("Get ok=%v want=true", ok)
-				}
-				if !bytes.Equal(out, tc.bytesVal) {
-					t.Fatalf("Get value=%q want=%q", string(out), string(tc.bytesVal))
-				}
-			case valueKindStruct:
-				if err := client.Set("cache::item", tc.structVal, 0); err != nil {
-					t.Fatalf("Set error=%v", err)
-				}
-				var out sampleValue
-				ok, err := client.Get("cache::item", &out)
-				if err != nil {
-					t.Fatalf("Get error=%v", err)
-				}
-				if !ok {
-					t.Fatalf("Get ok=%v want=true", ok)
-				}
-				if out != tc.structVal {
-					t.Fatalf("Get value=%+v want=%+v", out, tc.structVal)
-				}
-			default:
-				t.Fatalf("unknown value kind=%d", tc.valueKind)
-			}
+			runSetGetCase(t, client, tc.valueKind, tc.stringVal, tc.bytesVal, tc.structVal)
 		})
 	}
 }
@@ -458,18 +486,7 @@ func TestCacheUpdateAndTTLRefreshTable(t *testing.T) {
 			if err := client.Set(tc.key, tc.firstValue, tc.firstTTL); err != nil {
 				t.Fatalf("Set(first) error=%v", err)
 			}
-
-			var firstOut string
-			firstOK, firstGetErr := client.Get(tc.key, &firstOut)
-			if firstGetErr != nil {
-				t.Fatalf("Get(first) error=%v", firstGetErr)
-			}
-			if !firstOK {
-				t.Fatalf("Get(first) ok=%v want=true", firstOK)
-			}
-			if firstOut != tc.firstValue {
-				t.Fatalf("Get(first) value=%q want=%q", firstOut, tc.firstValue)
-			}
+			assertGetStringValue(t, client, tc.key, tc.firstValue)
 
 			if tc.waitBeforeUpdate > 0 {
 				time.Sleep(tc.waitBeforeUpdate)
@@ -478,18 +495,7 @@ func TestCacheUpdateAndTTLRefreshTable(t *testing.T) {
 			if err := client.Set(tc.key, tc.secondValue, tc.secondTTL); err != nil {
 				t.Fatalf("Set(second) error=%v", err)
 			}
-
-			var secondOut string
-			secondOK, secondGetErr := client.Get(tc.key, &secondOut)
-			if secondGetErr != nil {
-				t.Fatalf("Get(second) error=%v", secondGetErr)
-			}
-			if !secondOK {
-				t.Fatalf("Get(second) ok=%v want=true", secondOK)
-			}
-			if secondOut != tc.secondValue {
-				t.Fatalf("Get(second) value=%q want=%q", secondOut, tc.secondValue)
-			}
+			assertGetStringValue(t, client, tc.key, tc.secondValue)
 
 			if tc.waitAfterUpdate > 0 {
 				time.Sleep(tc.waitAfterUpdate)

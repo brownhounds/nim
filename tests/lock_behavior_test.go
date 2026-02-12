@@ -8,9 +8,139 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/brownhounds/nim"
 )
 
 var errUnknownOpKind = errors.New("unknown op kind")
+
+type mixedOpsCase struct {
+	name          string
+	setWorkers    int
+	removeWorkers int
+	opsPerWorker  int
+	seed          bool
+}
+
+func launchSetWorkers(
+	client *nim.Client,
+	key string,
+	workers int,
+	opsPerWorker int,
+	errCh chan<- error,
+	panicCh chan<- struct{},
+	wg *sync.WaitGroup,
+) {
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Go(func() {
+			defer func() {
+				if recover() != nil {
+					panicCh <- struct{}{}
+				}
+			}()
+			for op := 0; op < opsPerWorker; op++ {
+				payload := fmt.Sprintf("set-worker-%d-op-%d", worker, op)
+				if err := client.Set(key, payload, 0); err != nil {
+					errCh <- err
+				}
+			}
+		})
+	}
+}
+
+func launchRemoveWorkers(
+	client *nim.Client,
+	key string,
+	workers int,
+	opsPerWorker int,
+	errCh chan<- error,
+	panicCh chan<- struct{},
+	wg *sync.WaitGroup,
+) {
+	for worker := 0; worker < workers; worker++ {
+		wg.Go(func() {
+			defer func() {
+				if recover() != nil {
+					panicCh <- struct{}{}
+				}
+			}()
+			for op := 0; op < opsPerWorker; op++ {
+				if err := client.Remove(key); err != nil {
+					errCh <- err
+				}
+			}
+		})
+	}
+}
+
+func assertNoPanicsOrErrors(t *testing.T, errCh <-chan error, panicCh <-chan struct{}) {
+	t.Helper()
+
+	if len(panicCh) > 0 {
+		t.Fatalf("mixed operations caused panic in %d goroutine(s)", len(panicCh))
+	}
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("mixed concurrent operation error=%v", err)
+		}
+	}
+}
+
+func assertCoherentFinalState(t *testing.T, client *nim.Client, key string) {
+	t.Helper()
+
+	exists, err := client.Exists(key)
+	if err != nil {
+		t.Fatalf("Exists error=%v", err)
+	}
+
+	var out string
+	ok, err := client.Get(key, &out)
+	if err != nil {
+		t.Fatalf("Get error=%v", err)
+	}
+	if exists {
+		if !ok {
+			t.Fatalf("Exists=true but Get ok=%v want=true", ok)
+		}
+		if out == "" {
+			t.Fatalf("Exists=true but Get returned empty value")
+		}
+		return
+	}
+	if ok {
+		t.Fatalf("Exists=false but Get ok=%v want=false", ok)
+	}
+}
+
+func runMixedOpsCase(t *testing.T, tc mixedOpsCase) {
+	t.Helper()
+
+	client := newClientForCase(t, tc.name, 1024)
+	key := "lock::mixed::key"
+
+	if tc.seed {
+		if err := client.Set(key, "seed", 0); err != nil {
+			t.Fatalf("Set(seed) error=%v", err)
+		}
+	}
+
+	totalOps := (tc.setWorkers + tc.removeWorkers) * tc.opsPerWorker
+	errCh := make(chan error, totalOps)
+	panicCh := make(chan struct{}, tc.setWorkers+tc.removeWorkers)
+	var wg sync.WaitGroup
+
+	launchSetWorkers(client, key, tc.setWorkers, tc.opsPerWorker, errCh, panicCh, &wg)
+	launchRemoveWorkers(client, key, tc.removeWorkers, tc.opsPerWorker, errCh, panicCh, &wg)
+
+	wg.Wait()
+	close(errCh)
+	close(panicCh)
+
+	assertNoPanicsOrErrors(t, errCh, panicCh)
+	assertCoherentFinalState(t, client, key)
+}
 
 func TestLockContentionTable(t *testing.T) {
 	t.Parallel()
@@ -168,13 +298,7 @@ func TestLockConcurrentSetTable(t *testing.T) {
 func TestLockConcurrentMixedOpsTable(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name          string
-		setWorkers    int
-		removeWorkers int
-		opsPerWorker  int
-		seed          bool
-	}{
+	cases := []mixedOpsCase{
 		{
 			name:          "balanced set remove",
 			setWorkers:    4,
@@ -200,88 +324,7 @@ func TestLockConcurrentMixedOpsTable(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := newClientForCase(t, tc.name, 1024)
-			key := "lock::mixed::key"
-
-			if tc.seed {
-				if err := client.Set(key, "seed", 0); err != nil {
-					t.Fatalf("Set(seed) error=%v", err)
-				}
-			}
-
-			totalOps := (tc.setWorkers + tc.removeWorkers) * tc.opsPerWorker
-			errCh := make(chan error, totalOps)
-			panicCh := make(chan struct{}, tc.setWorkers+tc.removeWorkers)
-			var wg sync.WaitGroup
-
-			for worker := 0; worker < tc.setWorkers; worker++ {
-				worker := worker
-				wg.Go(func() {
-					defer func() {
-						if recover() != nil {
-							panicCh <- struct{}{}
-						}
-					}()
-					for op := 0; op < tc.opsPerWorker; op++ {
-						payload := fmt.Sprintf("set-worker-%d-op-%d", worker, op)
-						if err := client.Set(key, payload, 0); err != nil {
-							errCh <- err
-						}
-					}
-				})
-			}
-
-			for worker := 0; worker < tc.removeWorkers; worker++ {
-				wg.Go(func() {
-					defer func() {
-						if recover() != nil {
-							panicCh <- struct{}{}
-						}
-					}()
-					for op := 0; op < tc.opsPerWorker; op++ {
-						if err := client.Remove(key); err != nil {
-							errCh <- err
-						}
-					}
-				})
-			}
-
-			wg.Wait()
-			close(errCh)
-			close(panicCh)
-
-			if len(panicCh) > 0 {
-				t.Fatalf("mixed operations caused panic in %d goroutine(s)", len(panicCh))
-			}
-
-			for err := range errCh {
-				if err != nil {
-					t.Fatalf("mixed concurrent operation error=%v", err)
-				}
-			}
-
-			exists, err := client.Exists(key)
-			if err != nil {
-				t.Fatalf("Exists error=%v", err)
-			}
-
-			var out string
-			ok, err := client.Get(key, &out)
-			if err != nil {
-				t.Fatalf("Get error=%v", err)
-			}
-			if exists {
-				if !ok {
-					t.Fatalf("Exists=true but Get ok=%v want=true", ok)
-				}
-				if out == "" {
-					t.Fatalf("Exists=true but Get returned empty value")
-				}
-				return
-			}
-			if ok {
-				t.Fatalf("Exists=false but Get ok=%v want=false", ok)
-			}
+			runMixedOpsCase(t, tc)
 		})
 	}
 }
