@@ -1,6 +1,5 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/brownhounds/nim.svg)](https://pkg.go.dev/github.com/brownhounds/nim)
 [![CI](https://github.com/brownhounds/nim/actions/workflows/ci.yml/badge.svg)](https://github.com/brownhounds/nim/actions/workflows/ci.yml)
-[![Release](https://github.com/brownhounds/nim/actions/workflows/release.yml/badge.svg)](https://github.com/brownhounds/nim/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/brownhounds/nim)](https://goreportcard.com/report/github.com/brownhounds/nim)
 [![Latest Release](https://img.shields.io/github/v/release/brownhounds/nim)](https://github.com/brownhounds/nim/releases)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/brownhounds/nim)](https://github.com/brownhounds/nim/blob/main/go.mod)
